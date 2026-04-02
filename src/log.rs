@@ -1,55 +1,48 @@
-use std::fs::OpenOptions;
-use std::io::{Result, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Result, Write};
 use std::path::Path;
 
 const LOG_FILE_NAME: &str = ".minikv.log";
 
 /// Agrega una operación al final del archivo de log (append-only).
-pub fn agregar_operacion(operacion: &str) -> Result<()> {
-    let mut archivo = OpenOptions::new()
+pub fn add_operation(operation: &str) -> Result<()> {
+    let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(LOG_FILE_NAME)?;
-    writeln!(archivo, "{}", operacion)?;
+    writeln!(file, "{}", operation)?;
     Ok(())
 }
 
 /// Lee todas las operaciones del log validando el formato.
-pub fn leer_todas_las_operaciones() -> Result<Vec<String>> {
-    let ruta = Path::new(LOG_FILE_NAME);
-
-    if !ruta.exists() {
+pub fn read_all_operations() -> Result<Vec<String>> {
+    let path = Path::new(LOG_FILE_NAME);
+    if !path.exists() {
         return Ok(Vec::new());
     }
 
-    let contenido = std::fs::read_to_string(ruta)?;
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut operations = Vec::new();
 
-    for linea in contenido.lines() {
-        if linea.trim().is_empty() {
+    for line_result in reader.lines() {
+        let line = line_result?;
+        if line.trim().is_empty() {
             continue;
         }
-        if !linea.starts_with("set ") {
+        if !line.starts_with("set ") {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "INVALID LOG FILE",
             ));
         }
+        operations.push(line);
     }
-
-    Ok(contenido
-        .lines()
-        .map_while(|linea| {
-            if linea.trim().is_empty() {
-                None
-            } else {
-                Some(linea.to_string())
-            }
-        })
-        .collect())
+    Ok(operations)
 }
 
 /// Trunca el archivo de log (lo vacía completamente).
-pub fn truncar() -> Result<()> {
+pub fn truncate() -> Result<()> {
     std::fs::File::create(LOG_FILE_NAME)?;
     Ok(())
 }
@@ -57,111 +50,106 @@ pub fn truncar() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use crate::test_sync::get_lock;
 
-    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn obtener_lock() -> &'static Mutex<()> {
-        TEST_LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn limpiar_log() {
+    fn clear_log() {
         let _ = std::fs::remove_file(LOG_FILE_NAME);
     }
 
     #[test]
-    fn test01_agregar_operacion() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
-        limpiar_log();
-        match agregar_operacion("set clave1 valor1") {
+    fn test01_add_operation() {
+        let _guard = get_lock().lock().unwrap();
+        clear_log();
+        match add_operation("set clave1 valor1") {
             Ok(_) => {}
-            Err(e) => panic!("Error en agregar_operacion: {}", e),
+            Err(e) => panic!("Error en add_operation: {}", e),
         }
 
-        match std::fs::read_to_string(LOG_FILE_NAME) {
-            Ok(content) => {
-                assert!(
-                    content.contains("set clave1 valor1"),
-                    "Content doesn't contain expected operation"
-                );
+        let file = match File::open(LOG_FILE_NAME) {
+            Ok(f) => f,
+            Err(e) => panic!("Error abriendo archivo de log: {}", e),
+        };
+        let reader = BufReader::new(file);
+        let mut found = false;
+        for line_result in reader.lines() {
+            match line_result {
+                Ok(line) => {
+                    if line.contains("set clave1 valor1") {
+                        found = true;
+                        break;
+                    }
+                }
+                Err(e) => panic!("Error leyendo línea: {}", e),
             }
-            Err(e) => panic!("Error leyendo archivo de log: {}", e),
         }
+        assert!(found, "Content doesn't contain expected operation");
 
-        limpiar_log();
+        clear_log();
     }
 
     #[test]
-    fn test02_lee_todas_las_operaciones() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
-        limpiar_log();
-        match agregar_operacion("set clave1 valor1") {
+    fn test02_read_all_operations() {
+        let _guard = get_lock().lock().unwrap();
+        clear_log();
+        match add_operation("set clave1 valor1") {
             Ok(_) => {}
             Err(e) => panic!("Error en primer append: {}", e),
         }
 
-        match agregar_operacion("set clave2 valor2") {
+        match add_operation("set clave2 valor2") {
             Ok(_) => {}
             Err(e) => panic!("Error en segundo append: {}", e),
         }
 
-        match agregar_operacion("set clave2") {
+        match add_operation("set clave2") {
             Ok(_) => {}
             Err(e) => panic!("Error en tercer append: {}", e),
         }
 
-        match leer_todas_las_operaciones() {
+        match read_all_operations() {
             Ok(ops) => {
                 assert_eq!(ops.len(), 3, "Expected 3 operations, got: {:?}", ops);
             }
             Err(e) => panic!("Error al leer operaciones: {}", e),
         }
 
-        limpiar_log();
+        clear_log();
     }
 
     #[test]
-    fn test03_lee_operaciones_archivo_inexistente() {
-        limpiar_log();
-        match leer_todas_las_operaciones() {
+    fn test03_read_operations_nonexistent_file() {
+        let _guard = get_lock().lock().unwrap();
+        clear_log();
+        match read_all_operations() {
             Ok(ops) => {
                 assert_eq!(ops.len(), 0, "Expected empty list, got: {:?}", ops);
             }
             Err(e) => panic!("Error al leer operaciones inexistentes: {}", e),
         }
-        limpiar_log();
+        clear_log();
     }
 
     #[test]
-    fn test04_trunca_log() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
-        limpiar_log();
-        match agregar_operacion("set clave1 valor1") {
+    fn test04_truncate_log() {
+        let _guard = get_lock().lock().unwrap();
+        clear_log();
+        match add_operation("set clave1 valor1") {
             Ok(_) => {}
             Err(e) => panic!("Error en append antes de truncate: {}", e),
         }
 
-        match truncar() {
+        match truncate() {
             Ok(_) => {}
             Err(e) => panic!("Error al truncar log: {}", e),
         }
 
-        match leer_todas_las_operaciones() {
+        match read_all_operations() {
             Ok(ops) => {
                 assert_eq!(ops.len(), 0, "Expected empty log after truncate");
             }
             Err(e) => panic!("Error al leer log después de truncate: {}", e),
         }
 
-        limpiar_log();
+        clear_log();
     }
 }

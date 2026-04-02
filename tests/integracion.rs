@@ -14,10 +14,7 @@ fn cleanup() {
 
 #[test]
 fn integracion01_flujo_completo_set_snapshot_load() {
-    let _guard = match get_lock().lock() {
-        Ok(guard) => guard,
-        Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-    };
+    let _guard = get_lock().lock().unwrap();
     cleanup();
 
     let mut store = KvStore::new();
@@ -87,10 +84,7 @@ fn integracion01_flujo_completo_set_snapshot_load() {
 
 #[test]
 fn integracion02_flujo_con_operaciones_log_complejas() {
-    let _guard = match get_lock().lock() {
-        Ok(guard) => guard,
-        Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-    };
+    let _guard = get_lock().lock().unwrap();
     cleanup();
 
     let mut store = KvStore::new();

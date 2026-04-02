@@ -1,6 +1,17 @@
 pub mod log;
 pub mod store;
 
+/// Módulo de sincronización para tests que acceden a archivos compartidos.
+#[doc(hidden)]
+#[cfg(test)]
+pub mod test_sync {
+    use std::sync::{Mutex, OnceLock};
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    pub fn get_lock() -> &'static Mutex<()> {
+        TEST_LOCK.get_or_init(|| Mutex::new(()))
+    }
+}
+
 use std::collections::HashMap;
 use std::io::Result;
 
@@ -17,7 +28,7 @@ pub enum Error {
 
 impl Error {
     /// Retorna el mensaje de error formateado.
-    pub fn mensaje(&self) -> String {
+    pub fn msg(&self) -> String {
         match self {
             Error::NotFound => "ERROR: NOT FOUND".to_string(),
             Error::ExtraArgument => "ERROR: EXTRA ARGUMENT".to_string(),
@@ -47,47 +58,41 @@ impl KvStore {
     }
     pub fn load() -> Result<Self> {
         // Cargar snapshot del archivo de datos
-        let mut almacenamiento = match store::load_snapshot() {
-            Ok(datos) => datos,
-            Err(error) => {
-                if error.to_string().contains("INVALID DATA FILE") {
-                    return Err(error);
+        let mut storage = match store::load_snapshot() {
+            Ok(data) => data,
+            Err(err) => {
+                if err.to_string().contains("INVALID DATA FILE") {
+                    return Err(err);
                 }
                 HashMap::new()
             }
         };
 
         // Leer y aplicar operaciones del log para reconstruir el estado actual
-        let operaciones = log::leer_todas_las_operaciones()?;
-        for operacion in operaciones {
-            aplicar_operacion(&mut almacenamiento, &operacion);
+        let operations = log::read_all_operations()?;
+        for op in operations {
+            apply_operation(&mut storage, &op);
         }
 
-        Ok(KvStore {
-            data: almacenamiento,
-        })
+        Ok(KvStore { data: storage })
     }
     /// Asocia un valor a una clave. Si el valor está vacío, elimina la clave.
-    pub fn set(&mut self, clave: String, valor: String) -> Result<()> {
-        let linea_log = if valor.is_empty() {
+    pub fn set(&mut self, key: String, value: String) -> Result<()> {
+        let linea_log = if value.is_empty() {
             // Unset: eliminar la clave
-            format!("set \"{}\"", clave)
+            format!("set \"{}\"", key)
         } else {
-            // Set: escapar comillas internas y guardar con formato entrecomillado
-            let valor_escapado = valor.replace("\"", "\\\"");
-            format!("set \"{}\" \"{}\"", clave, valor_escapado)
+            // Set: quitar comillas internas y guardar con formato entrecomillado
+            let value_sanitized = value.replace("\"", "\\\"");
+            format!("set \"{}\" \"{}\"", key, value_sanitized)
         };
 
-        match log::agregar_operacion(&linea_log) {
-            Ok(_) => {}
-            Err(error) => return Err(error),
-        }
-
+        log::add_operation(&linea_log)?;
         Ok(())
     }
     /// Obtiene el valor asociado a una clave, None si no existe.
-    pub fn get(&self, clave: &str) -> Option<String> {
-        self.data.get(clave).cloned()
+    pub fn get(&self, key: &str) -> Option<String> {
+        self.data.get(key).cloned()
     }
     /// Retorna la cantidad de claves activas (con valor) en el almacenamiento.
     pub fn len(&self) -> usize {
@@ -99,174 +104,177 @@ impl KvStore {
     }
     /// Genera un snapshot del estado actual y trunca el log.
     pub fn snapshot(&self) -> Result<()> {
-        match store::save_snapshot(&self.data) {
-            Ok(_) => {}
-            Err(e) => return Err(e),
-        }
-        match log::truncar() {
-            Ok(_) => {}
-            Err(e) => return Err(e),
-        }
+        store::save_snapshot(&self.data)?;
+        log::truncate()?;
         Ok(())
     }
 }
-/// Aplica una operación del log al HashMap reconstruyendo el estado.
-/// Parsea el formato entrecomillado: set "clave" "valor"
-fn aplicar_operacion(almacenamiento: &mut HashMap<String, String>, linea_operacion: &str) {
-    if !linea_operacion.starts_with("set ") {
+
+/// Estado del parser para procesar caracteres.
+struct ParseState {
+    in_quotes: bool,
+    escaped: bool,
+    parsing_key: bool,
+    found_space: bool,
+}
+
+impl Default for ParseState {
+    fn default() -> Self {
+        Self {
+            in_quotes: false,
+            escaped: false,
+            parsing_key: true,
+            found_space: false,
+        }
+    }
+}
+
+/// Parsea una línea de operación y extrae clave y valor.
+/// Formato esperado: "clave" "valor" o "clave" (para unset)
+fn parse_kv(text: &str) -> (String, String) {
+    let mut key = String::new();
+    let mut value = String::new();
+    let mut state = ParseState::default();
+
+    for c in text.chars() {
+        process_char(&mut key, &mut value, &mut state, c);
+    }
+
+    (key, value)
+}
+
+/// Procesa un caracter y actualiza el estado del parser.
+fn process_char(key: &mut String, value: &mut String, state: &mut ParseState, c: char) {
+    if state.escaped {
+        add_char(key, value, c, state.parsing_key);
+        state.escaped = false;
         return;
     }
 
-    let resto = &linea_operacion[4..];
-    let mut texto_clave = String::new();
-    let mut texto_valor = String::new();
-    let mut dentro_comillas = false;
-    let mut caracter_escapado = false;
-    let mut procesando_clave = true;
-    let mut primer_espacio_encontrado = false;
-    let caracteres: Vec<char> = resto.chars().collect();
-    let mut indice = 0;
-
-    while indice < caracteres.len() {
-        let caracter = caracteres[indice];
-
-        if caracter_escapado {
-            if procesando_clave {
-                texto_clave.push(caracter);
-            } else {
-                texto_valor.push(caracter);
-            }
-            caracter_escapado = false;
-            indice += 1;
-            continue;
-        }
-
-        if caracter == '\\' && dentro_comillas {
-            caracter_escapado = true;
-            if procesando_clave {
-                texto_clave.push(caracter);
-            } else {
-                texto_valor.push(caracter);
-            }
-            indice += 1;
-            continue;
-        }
-
-        if caracter == '"' {
-            dentro_comillas = !dentro_comillas;
-            indice += 1;
-            continue;
-        }
-
-        if caracter == ' ' && !dentro_comillas && procesando_clave && !primer_espacio_encontrado {
-            primer_espacio_encontrado = true;
-            procesando_clave = false;
-            indice += 1;
-            continue;
-        }
-
-        if procesando_clave {
-            texto_clave.push(caracter);
-        } else {
-            texto_valor.push(caracter);
-        }
-        indice += 1;
+    if c == '\\' && state.in_quotes {
+        state.escaped = true;
+        add_char(key, value, c, state.parsing_key);
+        return;
     }
 
-    if texto_valor.is_empty() {
-        // Unset: eliminar la clave del almacenamiento
-        almacenamiento.remove(&texto_clave);
+    if c == '"' {
+        state.in_quotes = !state.in_quotes;
+        return;
+    }
+
+    if c == ' ' && !state.in_quotes && state.parsing_key && !state.found_space {
+        state.found_space = true;
+        state.parsing_key = false;
+        return;
+    }
+
+    add_char(key, value, c, state.parsing_key);
+}
+
+/// Agrega un caracter a la clave o al valor según corresponda.
+fn add_char(key: &mut String, value: &mut String, c: char, is_key: bool) {
+    if is_key {
+        key.push(c);
     } else {
-        // Desescapar comillas internas
-        let valor_desescapado = texto_valor.replace("\\\"", "\"");
-        almacenamiento.insert(texto_clave, valor_desescapado);
+        value.push(c);
+    }
+}
+
+/// Aplica una operación del log al HashMap reconstruyendo el estado.
+/// Parsea el formato entrecomillado: set "clave" "valor"
+fn apply_operation(storage: &mut HashMap<String, String>, op_line: &str) {
+    if !op_line.starts_with("set ") {
+        return;
+    }
+
+    let (key, value) = parse_kv(&op_line[4..]);
+
+    if value.is_empty() {
+        storage.remove(&key);
+    } else {
+        let value_sanitized = value.replace("\\\"", "\"");
+        storage.insert(key, value_sanitized);
     }
 }
 
 /// Maneja errores de carga centralizando la lógica de conversión.
-fn gestionar_error_carga(error: std::io::Error) {
-    let mensaje_error = error.to_string();
-    if mensaje_error.contains("INVALID DATA FILE") {
-        eprintln!("{}", Error::InvalidDataFile.mensaje());
-    } else if mensaje_error.contains("INVALID LOG FILE") {
-        eprintln!("{}", Error::InvalidLogFile.mensaje());
+fn error_load_handle(error: std::io::Error) {
+    let error_msg = error.to_string();
+    if error_msg.contains("INVALID DATA FILE") {
+        eprintln!("{}", Error::InvalidDataFile.msg());
+    } else if error_msg.contains("INVALID LOG FILE") {
+        eprintln!("{}", Error::InvalidLogFile.msg());
     } else {
-        eprintln!("{}", Error::InvalidDataFile.mensaje());
+        eprintln!("{}", Error::InvalidDataFile.msg());
     }
 }
 
 /// Ejecuta el comando SET: guarda o actualiza una clave-valor.
-pub fn execute_set(clave: String, valor: String) {
-    let mut almacenamiento = match KvStore::load() {
-        Ok(almacen) => almacen,
-        Err(error) => {
-            gestionar_error_carga(error);
+pub fn execute_set(key: String, value: String) {
+    let mut storage = match KvStore::load() {
+        Ok(sto) => sto,
+        Err(err) => {
+            error_load_handle(err);
             return;
         }
     };
 
-    match almacenamiento.set(clave, valor) {
+    match storage.set(key, value) {
         Ok(_) => println!("OK"),
         Err(error) => eprintln!("{}", error),
     }
 }
 /// Ejecuta el comando GET: recupera el valor de una clave.
-pub fn execute_get(clave: String) {
-    let almacenamiento = match KvStore::load() {
-        Ok(almacen) => almacen,
-        Err(error) => {
-            gestionar_error_carga(error);
+pub fn execute_get(key: String) {
+    let storage = match KvStore::load() {
+        Ok(sto) => sto,
+        Err(err) => {
+            error_load_handle(err);
             return;
         }
     };
-    match almacenamiento.get(&clave) {
-        Some(valor) => println!("{}", valor),
-        None => eprintln!("{}", Error::NotFound.mensaje()),
+    match storage.get(&key) {
+        Some(value) => println!("{}", value),
+        None => eprintln!("{}", Error::NotFound.msg()),
     }
 }
 /// Ejecuta el comando LENGTH: retorna la cantidad de claves con valor.
 pub fn execute_length() {
-    let almacenamiento = match KvStore::load() {
-        Ok(almacen) => almacen,
-        Err(error) => {
-            gestionar_error_carga(error);
+    let storage = match KvStore::load() {
+        Ok(sto) => sto,
+        Err(err) => {
+            error_load_handle(err);
             return;
         }
     };
-    println!("{}", almacenamiento.len());
+    println!("{}", storage.len());
 }
 /// Ejecuta el comando SNAPSHOT: persiste el estado actual y limpia el log.
 pub fn execute_snapshot() {
-    let almacenamiento = match KvStore::load() {
-        Ok(almacen) => almacen,
-        Err(error) => {
-            gestionar_error_carga(error);
+    let storage = match KvStore::load() {
+        Ok(sto) => sto,
+        Err(err) => {
+            error_load_handle(err);
             return;
         }
     };
-    match almacenamiento.snapshot() {
+    match storage.snapshot() {
         Ok(_) => println!("OK"),
-        Err(error) => eprintln!("{}", error),
+        Err(err) => eprintln!("{}", err),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn obtener_lock() -> &'static Mutex<()> {
-        TEST_LOCK.get_or_init(|| Mutex::new(()))
-    }
+    use crate::test_sync::get_lock;
 
     fn cleanup() {
         let _ = std::fs::remove_file(".minikv.data");
         let _ = std::fs::remove_file(".minikv.log");
     }
 
-    fn eliminar_comillas(s: &str) -> String {
+    fn remove_quotes(s: &str) -> String {
         if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
             s[1..s.len() - 1].to_string()
         } else {
@@ -275,19 +283,16 @@ mod tests {
     }
 
     #[test]
-    fn test01_eliminar_comillas() {
-        assert_eq!(eliminar_comillas("\"hello world\""), "hello world");
-        assert_eq!(eliminar_comillas("hello"), "hello");
-        assert_eq!(eliminar_comillas("\"hello\""), "hello");
-        assert_eq!(eliminar_comillas("\"\""), "");
+    fn test01_remove_quotes() {
+        assert_eq!(remove_quotes("\"hello world\""), "hello world");
+        assert_eq!(remove_quotes("hello"), "hello");
+        assert_eq!(remove_quotes("\"hello\""), "hello");
+        assert_eq!(remove_quotes("\"\""), "");
     }
 
     #[test]
-    fn test02_store_nuevo_vacio() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
+    fn test02_new_store_empty() {
+        let _guard = get_lock().lock().unwrap();
         cleanup();
 
         let store = KvStore::new();
@@ -298,17 +303,14 @@ mod tests {
     }
 
     #[test]
-    fn test04_set_get_valor() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
+    fn test04_set_get_value() {
+        let _guard = get_lock().lock().unwrap();
         cleanup();
 
         let mut store = KvStore::new();
         match store.set("nombre".to_string(), "jose".to_string()) {
             Ok(_) => {}
-            Err(e) => panic!("Error al hacer set: {}", e),
+            Err(e) => panic!("Error en set: {}", e),
         }
 
         match KvStore::load() {
@@ -323,11 +325,8 @@ mod tests {
     }
 
     #[test]
-    fn test05_set_pisa_valor() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
+    fn test05_set_overwrite_value() {
+        let _guard = get_lock().lock().unwrap();
         cleanup();
 
         let mut store = KvStore::new();
@@ -353,11 +352,8 @@ mod tests {
     }
 
     #[test]
-    fn test06_setear_vacio_elimina_clave() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
+    fn test06_set_empty_remove_key() {
+        let _guard = get_lock().lock().unwrap();
         cleanup();
 
         let mut store = KvStore::new();
@@ -383,11 +379,8 @@ mod tests {
     }
 
     #[test]
-    fn test07_lenght_cuenta_claves() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
+    fn test07_length_count_keys() {
+        let _guard = get_lock().lock().unwrap();
         cleanup();
 
         let mut store = KvStore::new();
@@ -418,11 +411,8 @@ mod tests {
     }
 
     #[test]
-    fn test08_carga_store_despues_de_set_y_unset() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
+    fn test08_load_store_after_set_unset() {
+        let _guard = get_lock().lock().unwrap();
         cleanup();
 
         let mut store = KvStore::new();
@@ -454,11 +444,8 @@ mod tests {
     }
 
     #[test]
-    fn test09_snapshot_persiste_estado_y_trunca_log() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
+    fn test09_snapshot_persist_and_truncate_log() {
+        let _guard = get_lock().lock().unwrap();
         cleanup();
 
         let mut store = KvStore::new();
@@ -501,10 +488,10 @@ mod tests {
     }
 
     #[test]
-    fn test10_aplica_operacion_con_comillas() {
+    fn test10_apply_operation_with_quotes() {
         let mut data = HashMap::new();
 
-        aplicar_operacion(&mut data, "set clave \"valor con espacios\"");
+        apply_operation(&mut data, "set clave \"valor con espacios\"");
 
         assert_eq!(data.get("clave"), Some(&"valor con espacios".to_string()));
     }

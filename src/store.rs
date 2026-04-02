@@ -1,76 +1,72 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Result, Write};
+use std::io::{BufRead, BufReader, Result, Write};
 use std::path::Path;
 
 const DATA_FILE_NAME: &str = ".minikv.data";
 
 /// Guarda un snapshot (copia del estado actual) en el archivo de datos.
-pub fn save_snapshot(almacenamiento: &HashMap<String, String>) -> Result<()> {
-    let mut archivo = File::create(DATA_FILE_NAME)?;
-    for (clave, valor) in almacenamiento {
-        let valor_escapado = valor.replace("\"", "\\\"");
-        writeln!(archivo, "\"{}\" \"{}\"", clave, valor_escapado)?;
+pub fn save_snapshot(storage: &HashMap<String, String>) -> Result<()> {
+    let mut file = File::create(DATA_FILE_NAME)?;
+    for (key, value) in storage {
+        let special_value = value.replace("\"", "\\\"");
+        writeln!(file, "\"{}\" \"{}\"", key, special_value)?;
     }
     Ok(())
 }
 
 /// Carga el snapshot del archivo de datos validando el formato.
 pub fn load_snapshot() -> Result<HashMap<String, String>> {
-    let ruta = Path::new(DATA_FILE_NAME);
-    let mut almacenamiento = HashMap::new();
-
-    if !ruta.exists() {
-        return Ok(almacenamiento);
+    let path = Path::new(DATA_FILE_NAME);
+    if !path.exists() {
+        return Ok(HashMap::new());
     }
 
-    let contenido = std::fs::read_to_string(ruta)?;
-    for linea in contenido.lines() {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut storage = HashMap::new();
+
+    for line_result in reader.lines() {
+        let linea = line_result?;
         if linea.trim().is_empty() {
             continue;
         }
+        let (clave, valor) = parse_data_line(&linea)?;
+        storage.insert(clave, valor);
+    }
+    Ok(storage)
+}
 
-        let partes: Vec<&str> = linea.splitn(2, "\" \"").collect();
-        if partes.len() != 2 {
+/// Parsea una línea del archivo de datos y extrae clave y valor.
+fn parse_data_line(line: &str) -> Result<(String, String)> {
+    let parsed_line_parts: Vec<&str> = line.splitn(2, "\" \"").collect();
+    let (key_raw, value_raw) = match parsed_line_parts.as_slice() {
+        [c, v] => (*c, *v),
+        _ => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "INVALID DATA FILE",
-            ));
+            ))
         }
-
-        let clave = partes[0].trim_start_matches('"').to_string();
-        let mut valor = partes[1].trim_end_matches('"').to_string();
-
-        // Desescapar comillas internas
-        valor = valor.replace("\\\"", "\"");
-
-        almacenamiento.insert(clave, valor);
-    }
-    Ok(almacenamiento)
+    };
+    let key = key_raw.trim_start_matches('"').to_string();
+    let value = value_raw.trim_end_matches('"').replace("\\\"", "\"");
+    Ok((key, value))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use crate::test_sync::get_lock;
 
-    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn obtener_lock() -> &'static Mutex<()> {
-        TEST_LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn limpiar(ruta: &str) {
-        let _ = std::fs::remove_file(ruta);
+    fn cleanup(path: &str) {
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn test01_guarda_y_carga_snapshot() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
-        limpiar(DATA_FILE_NAME);
+    fn test_save_and_load_snapshot_success() {
+        let _guard = get_lock().lock().unwrap();
+        cleanup(DATA_FILE_NAME);
 
         let mut data = HashMap::new();
         data.insert("clave1".to_string(), "valor1".to_string());
@@ -97,16 +93,13 @@ mod tests {
             Err(e) => panic!("Error al cargar snapshot: {}", e),
         }
 
-        limpiar(DATA_FILE_NAME);
+        cleanup(DATA_FILE_NAME);
     }
 
     #[test]
-    fn test02_carga_snapshot_archivo_inexistente() {
-        let _guardia = match obtener_lock().lock() {
-            Ok(guardia) => guardia,
-            Err(_) => panic!("No se pudo adquirir el lock de prueba"),
-        };
-        limpiar(DATA_FILE_NAME);
+    fn test_load_snapshot_nonexistent_file() {
+        let _guard = get_lock().lock().unwrap();
+        cleanup(DATA_FILE_NAME);
 
         match load_snapshot() {
             Ok(data) => {
@@ -115,6 +108,6 @@ mod tests {
             Err(e) => panic!("Error al cargar snapshot inexistente: {}", e),
         }
 
-        limpiar(DATA_FILE_NAME);
+        cleanup(DATA_FILE_NAME);
     }
 }
