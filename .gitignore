@@ -1,3 +1,4 @@
 /target
+/agent
 .github/copilot-instructions.md
 *.zip
