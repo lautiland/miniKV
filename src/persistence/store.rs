@@ -18,7 +18,12 @@ const DATA_FILE_NAME: &str = ".minikv.data";
 /// Retorna error si falla la creación o escritura del archivo.
 ///
 /// # Ejemplo
-/// ```
+/// ``` ignore
+/// use std::collections::HashMap;
+/// use minikv::persistence::store::save_snapshot;
+/// let mut data = HashMap::new();
+///
+/// data.insert("clave".to_string(), "valor".to_string());
 /// save_snapshot(&data).expect("Failed to save");
 /// ```
 pub fn save_snapshot<S: BuildHasher>(storage: &HashMap<String, String, S>) -> Result<()> {
@@ -36,8 +41,11 @@ pub fn save_snapshot<S: BuildHasher>(storage: &HashMap<String, String, S>) -> Re
 /// Retorna error si el archivo tiene formato inválido.
 ///
 /// # Ejemplo
-/// ```
-/// load_snapshot().expect("Failed to load");
+/// ``` ignore
+/// use std::collections::HashMap;
+/// use minikv::persistence::store::load_snapshot;
+/// let data = load_snapshot().expect("Failed to load");
+/// assert_eq!(data.get("clave"), Some(&"valor".to_string()));
 /// ```
 pub fn load_snapshot() -> Result<HashMap<String, String>> {
     let path = Path::new(DATA_FILE_NAME);

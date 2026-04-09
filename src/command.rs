@@ -10,6 +10,7 @@ use crate::Error;
 /// # Ejemplo
 /// ```
 /// use minikv::Command;
+///
 /// let args = vec!["program".into(), "set".into(), "clave".into(), "valor".into()];
 /// let cmd: Command = Command::new(&args).unwrap();
 /// assert_eq!(cmd.get_key(), Ok("clave".to_string()));
@@ -53,6 +54,18 @@ impl Command {
         })
     }
 
+    /// Parsea un comando a partir de una cadena de texto, separando por espacios.
+    /// Valida que el comando tenga la cantidad correcta de argumentos.
+    ///
+    /// # Errors
+    /// Retorna error si el comando es desconocido o tiene argumentos inválidos.
+    pub fn parse_from_string(line: &str) -> Result<Command, String> {
+        let args: Vec<String> = std::iter::once(String::new())
+            .chain(line.split_whitespace().map(String::from))
+            .collect();
+        Command::new(&args)
+    }
+
     /// Obtiene la clave del comando, retorna error si no existe.
     ///
     /// # Errors
@@ -83,7 +96,7 @@ impl Command {
 
     /// Retorna el tipo de comando.
     #[must_use]
-    pub fn cmd_type(&self) -> CommandType {
+    pub fn get_type(&self) -> CommandType {
         self.cmd_type
     }
 }
@@ -127,7 +140,7 @@ impl CommandType {
     /// ```
     #[must_use]
     pub fn parse(s: &str) -> Option<CommandType> {
-        match s {
+        match s.to_lowercase().as_str() {
             "set" => Some(CommandType::Set),
             "get" => Some(CommandType::Get),
             "length" => Some(CommandType::Length),
@@ -196,7 +209,7 @@ mod tests {
             "valor".into(),
         ];
         let cmd = Command::new(&args).unwrap();
-        assert_eq!(cmd.cmd_type(), CommandType::Set);
+        assert_eq!(cmd.get_type(), CommandType::Set);
         assert_eq!(cmd.get_key(), Ok("clave".to_string()));
         assert_eq!(cmd.get_value(), Ok("valor".to_string()));
     }
@@ -205,7 +218,7 @@ mod tests {
     fn test02_verify_command_get() {
         let args = vec!["program".into(), "get".into(), "clave".into()];
         let cmd = Command::new(&args).unwrap();
-        assert_eq!(cmd.cmd_type(), CommandType::Get);
+        assert_eq!(cmd.get_type(), CommandType::Get);
         assert_eq!(cmd.get_key(), Ok("clave".to_string()));
     }
 
@@ -213,14 +226,14 @@ mod tests {
     fn test03_verify_command_length() {
         let args = vec!["program".into(), "length".into()];
         let cmd = Command::new(&args).unwrap();
-        assert_eq!(cmd.cmd_type(), CommandType::Length);
+        assert_eq!(cmd.get_type(), CommandType::Length);
     }
 
     #[test]
     fn test04_verify_command_snapshot() {
         let args = vec!["program".into(), "snapshot".into()];
         let cmd = Command::new(&args).unwrap();
-        assert_eq!(cmd.cmd_type(), CommandType::Snapshot);
+        assert_eq!(cmd.get_type(), CommandType::Snapshot);
     }
 
     // Argumentos inválidos
@@ -242,7 +255,7 @@ mod tests {
     fn test07_verify_command_set_one_parameter() {
         let args = vec!["program".into(), "set".into(), "clave".into()];
         let cmd = Command::new(&args).unwrap();
-        assert_eq!(cmd.cmd_type(), CommandType::Set);
+        assert_eq!(cmd.get_type(), CommandType::Set);
         assert_eq!(cmd.get_key(), Ok("clave".to_string()));
     }
 
@@ -344,5 +357,27 @@ mod tests {
         assert_eq!(CommandType::Get.max_argument_count(), 1);
         assert_eq!(CommandType::Length.max_argument_count(), 0);
         assert_eq!(CommandType::Snapshot.max_argument_count(), 0);
+    }
+
+    #[test]
+    fn test19_parse_from_string_valid() {
+        let cmd = Command::parse_from_string("set clave valor").unwrap();
+        assert_eq!(cmd.get_type(), CommandType::Set);
+        assert_eq!(cmd.get_key(), Ok("clave".to_string()));
+        assert_eq!(cmd.get_value(), Ok("valor".to_string()));
+    }
+
+    #[test]
+    fn test20_parse_from_string_invalid() {
+        let result = Command::parse_from_string("unknown cmd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test21_parse_mayus_minus() {
+        let cmd = Command::parse_from_string("SeT clave valor").unwrap();
+        assert_eq!(cmd.get_type(), CommandType::Set);
+        assert_eq!(cmd.get_key(), Ok("clave".to_string()));
+        assert_eq!(cmd.get_value(), Ok("valor".to_string()));
     }
 }

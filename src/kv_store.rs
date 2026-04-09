@@ -15,10 +15,14 @@ use std::io::Result;
 /// # Ejemplo
 /// ```
 /// use minikv::KvStore;
+/// # let _ = std::fs::remove_file(".minikv.log");
+/// # let _ = std::fs::remove_file(".minikv.data");
 /// let mut store = KvStore::new();
 /// store.set("name", "Alice").expect("Failed to set");
 /// let loaded = KvStore::load().expect("Failed to load");
 /// assert_eq!(loaded.get("name"), Some("Alice".to_string()));
+/// # let _ = std::fs::remove_file(".minikv.log");
+/// # let _ = std::fs::remove_file(".minikv.data");
 /// ```
 pub struct KvStore {
     data: HashMap<String, String>,
@@ -56,7 +60,11 @@ impl KvStore {
     /// # Ejemplo
     /// ```
     /// use minikv::KvStore;
+    /// # let _ = std::fs::remove_file(".minikv.log");
+    /// # let _ = std::fs::remove_file(".minikv.data");
     /// let store = KvStore::load().expect("Failed to load");
+    /// # let _ = std::fs::remove_file(".minikv.log");
+    /// # let _ = std::fs::remove_file(".minikv.data");
     /// ```
     pub fn load() -> Result<Self> {
         // Cargar snapshot del archivo de datos
@@ -88,10 +96,14 @@ impl KvStore {
     /// # Ejemplo
     /// ```
     /// use minikv::KvStore;
+    /// # let _ = std::fs::remove_file(".minikv.log");
+    /// # let _ = std::fs::remove_file(".minikv.data");
     ///
     /// let mut store = KvStore::new();
     /// store.set("key", "value").expect("Failed to set");
     /// store.set("key", "").expect("Failed to delete");  // Valor vacío elimina
+    /// # let _ = std::fs::remove_file(".minikv.log");
+    /// # let _ = std::fs::remove_file(".minikv.data");
     /// ```
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
         let linea_log = if value.is_empty() {
@@ -157,8 +169,12 @@ impl KvStore {
     /// # Ejemplo
     /// ```
     /// use minikv::KvStore;
+    /// # let _ = std::fs::remove_file(".minikv.log");
+    /// # let _ = std::fs::remove_file(".minikv.data");
     /// let store = KvStore::new();
     /// store.snapshot().expect("Failed to snapshot");
+    /// # let _ = std::fs::remove_file(".minikv.log");
+    /// # let _ = std::fs::remove_file(".minikv.data");
     /// ```
     pub fn snapshot(&self) -> Result<()> {
         store::save_snapshot(&self.data)?;
@@ -379,8 +395,9 @@ mod tests {
 
         match KvStore::load() {
             Ok(loaded) => {
-                assert_eq!(loaded.len(), 1);
+                assert_eq!(loaded.get("a"), None);
                 assert_eq!(loaded.get("b"), Some("2".to_string()));
+                assert_eq!(loaded.len(), 1);
             }
             Err(e) => panic!("Error al cargar: {e}"),
         }

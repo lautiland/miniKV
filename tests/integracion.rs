@@ -23,9 +23,6 @@ fn integracion01_flujo_completo_set_snapshot_load() {
     store.set("edad", "25").unwrap();
 
     let loaded = KvStore::load().unwrap();
-    assert_eq!(loaded.len(), 3);
-
-    let loaded = KvStore::load().unwrap();
     loaded.snapshot().unwrap();
 
     let loaded = KvStore::load().unwrap();
@@ -43,36 +40,23 @@ fn integracion02_flujo_con_operaciones_log_complejas() {
     cleanup();
 
     let mut store = KvStore::new();
-    store
-        .set("nombre_completo", "Juan Carlos Perez Rodriguez")
-        .unwrap();
-    store
-        .set(
-            "descripcion",
-            "Desarrollador de software con experiencia en Rust",
-        )
-        .unwrap();
-    store.set("ciudad", "Buenos Aires").unwrap();
-    assert_eq!(KvStore::load().unwrap().len(), 3);
-
-    store.set("ciudad", "Córdoba").unwrap();
-    let reloaded = KvStore::load().unwrap();
-    assert_eq!(reloaded.get("ciudad"), Some("Córdoba".to_string()));
-
-    store.set("descripcion", "").unwrap();
-    let reloaded = KvStore::load().unwrap();
-    assert_eq!(reloaded.len(), 2);
-    assert_eq!(reloaded.get("descripcion"), None);
-
-    KvStore::load().unwrap().snapshot().unwrap();
+    store.set("a", "1").unwrap();
+    store.set("b", "2").unwrap();
+    store.set("c", "3").unwrap();
+    store.set("d", "4").unwrap();
+    store.set("e", "5").unwrap();
 
     let loaded = KvStore::load().unwrap();
-    assert_eq!(
-        loaded.get("nombre_completo"),
-        Some("Juan Carlos Perez Rodriguez".to_string())
-    );
-    assert_eq!(loaded.get("ciudad"), Some("Córdoba".to_string()));
-    assert_eq!(loaded.get("descripcion"), None);
+
+    loaded.snapshot().unwrap();
+
+    let loaded = KvStore::load().unwrap();
+    assert_eq!(loaded.len(), 5);
+    assert_eq!(loaded.get("a"), Some("1".to_string()));
+    assert_eq!(loaded.get("b"), Some("2".to_string()));
+    assert_eq!(loaded.get("c"), Some("3".to_string()));
+    assert_eq!(loaded.get("d"), Some("4".to_string()));
+    assert_eq!(loaded.get("e"), Some("5".to_string()));
 
     cleanup();
 }

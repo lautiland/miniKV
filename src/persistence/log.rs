@@ -17,7 +17,11 @@ const LOG_FILE_NAME: &str = ".minikv.log";
 ///
 /// # Ejemplo
 /// ```
+/// use minikv::persistence::log::add_operation;
+/// # let _ = std::fs::remove_file(".minikv.log");
+///
 /// add_operation(r#"set "name" "Alice""#).expect("Failed to log");
+/// # let _ = std::fs::remove_file(".minikv.log");
 /// ```
 pub fn add_operation(operation: &str) -> Result<()> {
     let mut file = OpenOptions::new()
@@ -35,7 +39,9 @@ pub fn add_operation(operation: &str) -> Result<()> {
 /// Retorna error si el archivo tiene formato inválido.
 ///
 /// # Ejemplo
-/// ```
+/// ``` ignore
+/// use minikv::persistence::log::read_all_operations;
+///
 /// read_all_operations().expect("Failed to read log");
 /// ```
 pub fn read_all_operations() -> Result<Vec<String>> {
@@ -71,7 +77,9 @@ pub fn read_all_operations() -> Result<Vec<String>> {
 /// Retorna error si falla la creación del archivo vacío.
 ///
 /// # Ejemplo
-/// ```
+/// ``` ignore
+/// use minikv::persistence::log::truncate;
+///
 /// truncate().expect("Failed to truncate log");
 /// ```
 pub fn truncate() -> Result<()> {

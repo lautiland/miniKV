@@ -2,11 +2,12 @@ pub mod command;
 pub mod error;
 pub mod kv_store;
 pub mod persistence;
+pub mod protocol;
+pub mod server;
 
 pub use command::{Command, CommandType};
 pub use error::Error;
 pub use kv_store::KvStore;
-
 /// Maneja errores de carga centralizando la lógica de conversión.
 fn error_load_handle(error: &std::io::Error) {
     let error_msg = error.to_string();
@@ -79,7 +80,6 @@ pub fn execute_snapshot() {
 
 /// Módulo de sincronización para tests que acceden a archivos compartidos.
 #[doc(hidden)]
-#[cfg(test)]
 pub mod test_sync {
     use std::sync::{Mutex, OnceLock};
     static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();

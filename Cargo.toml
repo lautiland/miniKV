@@ -8,8 +8,12 @@ name = "minikv"
 path = "src/lib.rs"
 
 [[bin]]
-name = "minikv"
-path = "src/main.rs"
+name = "minikv-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "minikv-client"
+path = "src/bin/client.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
