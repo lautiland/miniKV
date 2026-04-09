@@ -27,9 +27,9 @@ fn integracion01_flujo_completo_set_snapshot_load() {
 
     let loaded = KvStore::load().unwrap();
     assert_eq!(loaded.len(), 3);
-    assert_eq!(loaded.get("usuario"), Some("juan".to_string()));
-    assert_eq!(loaded.get("email"), Some("juan@example.com".to_string()));
-    assert_eq!(loaded.get("edad"), Some("25".to_string()));
+    assert_eq!(loaded.get("usuario"), Some("juan"));
+    assert_eq!(loaded.get("email"), Some("juan@example.com"));
+    assert_eq!(loaded.get("edad"), Some("25"));
 
     cleanup();
 }
@@ -52,11 +52,11 @@ fn integracion02_flujo_con_operaciones_log_complejas() {
 
     let loaded = KvStore::load().unwrap();
     assert_eq!(loaded.len(), 5);
-    assert_eq!(loaded.get("a"), Some("1".to_string()));
-    assert_eq!(loaded.get("b"), Some("2".to_string()));
-    assert_eq!(loaded.get("c"), Some("3".to_string()));
-    assert_eq!(loaded.get("d"), Some("4".to_string()));
-    assert_eq!(loaded.get("e"), Some("5".to_string()));
+    assert_eq!(loaded.get("a"), Some("1"));
+    assert_eq!(loaded.get("b"), Some("2"));
+    assert_eq!(loaded.get("c"), Some("3"));
+    assert_eq!(loaded.get("d"), Some("4"));
+    assert_eq!(loaded.get("e"), Some("5"));
 
     cleanup();
 }

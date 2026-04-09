@@ -1,7 +1,7 @@
-//! Parseo y validación de comandos para el CLI de `MiniKV`.
+//! Parseo y validación de comandos para `MiniKV`.
 //!
-//! Este módulo maneja el parseo de argumentos de línea de comandos en
-//! comandos estructurados con validación de cantidad de argumentos.
+//! Este módulo maneja el parseo de comandos de texto y argumentos de
+//! línea de comandos, validando la cantidad de parámetros.
 
 use crate::Error;
 
@@ -12,9 +12,9 @@ use crate::Error;
 /// use minikv::Command;
 ///
 /// let args = vec!["program".into(), "set".into(), "clave".into(), "valor".into()];
-/// let cmd: Command = Command::new(&args).unwrap();
-/// assert_eq!(cmd.get_key(), Ok("clave".to_string()));
-/// assert_eq!(cmd.get_value(), Ok("valor".to_string()));
+/// let cmd: Command = Command::new(&args).expect("command válido");
+/// assert_eq!(cmd.get_key(), Ok("clave"));
+/// assert_eq!(cmd.get_value(), Ok(Some("valor")));
 /// ```
 pub struct Command {
     cmd_type: CommandType,
@@ -28,20 +28,20 @@ impl Command {
     ///
     /// # Errors
     /// Retorna error si el comando es desconocido o tiene argumentos inválidos.
-    pub fn new(args: &[String]) -> Result<Command, String> {
+    pub fn new(args: &[String]) -> Result<Command, Error> {
         let Some(name) = args.get(1) else {
-            return Err(Error::UnknownCommand.msg());
+            return Err(Error::UnknownCommand);
         };
         let Some(cmd_type) = CommandType::parse(name) else {
-            return Err(Error::UnknownCommand.msg());
+            return Err(Error::UnknownCommand);
         };
 
         let received_args = args.len() - 2;
         if received_args < cmd_type.min_argument_count() {
-            return Err(Error::MissingArgument.msg());
+            return Err(Error::MissingArgument);
         }
         if received_args > cmd_type.max_argument_count() {
-            return Err(Error::ExtraArgument.msg());
+            return Err(Error::ExtraArgument);
         }
 
         let key = args.get(2).cloned();
@@ -54,41 +54,62 @@ impl Command {
         })
     }
 
-    /// Parsea un comando a partir de una cadena de texto, separando por espacios.
+    /// Parsea un comando a partir de una cadena de texto.
+    /// Permite argumentos entre comillas y escapes con `\"`.
     /// Valida que el comando tenga la cantidad correcta de argumentos.
     ///
     /// # Errors
     /// Retorna error si el comando es desconocido o tiene argumentos inválidos.
-    pub fn parse_from_string(line: &str) -> Result<Command, String> {
-        let args: Vec<String> = std::iter::once(String::new())
-            .chain(line.split_whitespace().map(String::from))
-            .collect();
-        Command::new(&args)
+    pub fn parse_from_string(line: &str) -> Result<Command, Error> {
+        let parts = parse_parts(line)?;
+        let Some(cmd_text) = parts.first() else {
+            return Err(Error::UnknownCommand);
+        };
+        let Some(cmd_type) = CommandType::parse(cmd_text) else {
+            return Err(Error::UnknownCommand);
+        };
+        let key = parts.get(1).cloned();
+        let value = parts.get(2).cloned();
+        if parts.len() > 3 {
+            return Err(Error::ExtraArgument);
+        }
+        let received_args = key.as_ref().map_or(0, |_| 1) + value.as_ref().map_or(0, |_| 1);
+        if received_args < cmd_type.min_argument_count() {
+            return Err(Error::MissingArgument);
+        }
+        if received_args > cmd_type.max_argument_count() {
+            return Err(Error::ExtraArgument);
+        }
+        Ok(Command {
+            cmd_type,
+            key,
+            value,
+        })
     }
 
     /// Obtiene la clave del comando, retorna error si no existe.
     ///
     /// # Errors
     /// Retorna error si el comando no tiene clave.
-    pub fn get_key(&self) -> Result<String, String> {
+    pub fn get_key(&self) -> Result<&str, Error> {
         match &self.key {
-            Some(key) => Ok(key.clone()),
-            None => Err(Error::NotFound.msg()),
+            Some(key) => Ok(key.as_str()),
+            None => Err(Error::NotFound),
         }
     }
 
-    /// Obtiene el valor del comando, retorna cadena vacía para SET sin valor.
+    /// Obtiene el valor del comando, devuelve `None` para SET sin valor.
     ///
     /// # Errors
     /// Retorna error si el comando no tiene valor y no es SET.
-    pub fn get_value(&self) -> Result<String, String> {
+    pub fn get_value(&self) -> Result<Option<&str>, Error> {
         match &self.value {
-            Some(value) => Ok(value.clone()),
+            Some(value) => Ok(Some(value.as_str())),
             None => {
                 if self.cmd_type == CommandType::Set {
-                    Ok(String::new())
+                    Ok(None)
                 } else {
-                    Err(Error::NotFound.msg())
+                    Err(Error::NotFound)
                 }
             }
         }
@@ -105,7 +126,6 @@ impl Command {
 /// Cada tipo tiene una cantidad mínima y máxima de argumentos permitida.
 ///
 /// # Comandos Soportados
-///
 /// - `Set`: Almacena o actualiza un par clave-valor (1-2 args)
 /// - `Get`: Recupera un valor por clave (1 arg)
 /// - `Length`: Obtiene la cantidad de claves almacenadas (0 args)
@@ -195,6 +215,85 @@ fn get_set_value(cmd_type: CommandType, args: &[String], received_args: usize) -
     }
 }
 
+fn parse_parts(line: &str) -> Result<Vec<String>, Error> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for c in line.chars() {
+        let action = parse_char(c, in_quotes, escaped);
+        apply_char_action(
+            &mut parts,
+            &mut current,
+            action,
+            &mut in_quotes,
+            &mut escaped,
+        );
+    }
+    finish_parts(&mut parts, current, in_quotes)
+}
+
+#[derive(Copy, Clone)]
+enum CharAction {
+    Push(char),
+    ToggleQuotes,
+    BeginEscape,
+    Split,
+}
+
+fn parse_char(c: char, in_quotes: bool, escaped: bool) -> CharAction {
+    if escaped {
+        return CharAction::Push(c);
+    }
+    if c == '\\' && in_quotes {
+        return CharAction::BeginEscape;
+    }
+    if c == '"' {
+        return CharAction::ToggleQuotes;
+    }
+    if c.is_whitespace() && !in_quotes {
+        return CharAction::Split;
+    }
+    CharAction::Push(c)
+}
+
+fn apply_char_action(
+    parts: &mut Vec<String>,
+    current: &mut String,
+    action: CharAction,
+    in_quotes: &mut bool,
+    escaped: &mut bool,
+) {
+    match action {
+        CharAction::Push(c) => {
+            current.push(c);
+            *escaped = false;
+        }
+        CharAction::ToggleQuotes => *in_quotes = !*in_quotes,
+        CharAction::BeginEscape => *escaped = true,
+        CharAction::Split => {
+            if !current.is_empty() {
+                parts.push(std::mem::take(current));
+            }
+            *escaped = false;
+        }
+    }
+}
+
+fn finish_parts(
+    parts: &mut Vec<String>,
+    current: String,
+    in_quotes: bool,
+) -> Result<Vec<String>, Error> {
+    if in_quotes {
+        return Err(Error::ExtraArgument);
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    Ok(std::mem::take(parts))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,8 +309,8 @@ mod tests {
         ];
         let cmd = Command::new(&args).unwrap();
         assert_eq!(cmd.get_type(), CommandType::Set);
-        assert_eq!(cmd.get_key(), Ok("clave".to_string()));
-        assert_eq!(cmd.get_value(), Ok("valor".to_string()));
+        assert_eq!(cmd.get_key(), Ok("clave"));
+        assert_eq!(cmd.get_value(), Ok(Some("valor")));
     }
 
     #[test]
@@ -219,7 +318,7 @@ mod tests {
         let args = vec!["program".into(), "get".into(), "clave".into()];
         let cmd = Command::new(&args).unwrap();
         assert_eq!(cmd.get_type(), CommandType::Get);
-        assert_eq!(cmd.get_key(), Ok("clave".to_string()));
+        assert_eq!(cmd.get_key(), Ok("clave"));
     }
 
     #[test]
@@ -241,14 +340,14 @@ mod tests {
     fn test05_verify_command_unknown() {
         let args = vec!["program".into(), "unknown".into()];
         let result = Command::new(&args);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(Error::UnknownCommand)));
     }
 
     #[test]
     fn test06_verify_command_set_without_parameters() {
         let args = vec!["program".into(), "set".into()];
         let result = Command::new(&args);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(Error::MissingArgument)));
     }
 
     #[test]
@@ -256,21 +355,21 @@ mod tests {
         let args = vec!["program".into(), "set".into(), "clave".into()];
         let cmd = Command::new(&args).unwrap();
         assert_eq!(cmd.get_type(), CommandType::Set);
-        assert_eq!(cmd.get_key(), Ok("clave".to_string()));
+        assert_eq!(cmd.get_key(), Ok("clave"));
     }
 
     #[test]
     fn test08_verify_command_get_missing_arguments() {
         let args = vec!["program".into(), "get".into()];
         let result = Command::new(&args);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(Error::MissingArgument)));
     }
 
     #[test]
     fn test09_verify_command_no_arguments() {
         let args = vec!["program".into()];
         let result = Command::new(&args);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(Error::UnknownCommand)));
     }
 
     #[test]
@@ -283,7 +382,7 @@ mod tests {
             "extra".into(),
         ];
         let result = Command::new(&args);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(Error::ExtraArgument)));
     }
 
     #[test]
@@ -295,21 +394,21 @@ mod tests {
             "extra".into(),
         ];
         let result = Command::new(&args);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(Error::ExtraArgument)));
     }
 
     #[test]
     fn test12_verify_command_length_with_arguments() {
         let args = vec!["program".into(), "length".into(), "extra".into()];
         let result = Command::new(&args);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(Error::ExtraArgument)));
     }
 
     #[test]
     fn test13_verify_command_snapshot_with_arguments() {
         let args = vec!["program".into(), "snapshot".into(), "extra".into()];
         let result = Command::new(&args);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(Error::ExtraArgument)));
     }
 
     #[test]
@@ -321,7 +420,7 @@ mod tests {
             "mi_valor".into(),
         ];
         let cmd = Command::new(&args).expect("Debería crear comando");
-        assert_eq!(cmd.get_key(), Ok("mi_clave".to_string()));
+        assert_eq!(cmd.get_key(), Ok("mi_clave"));
     }
 
     #[test]
@@ -333,14 +432,14 @@ mod tests {
             "valor".into(),
         ];
         let cmd = Command::new(&args).expect("Debería crear comando");
-        assert_eq!(cmd.get_value(), Ok("valor".to_string()));
+        assert_eq!(cmd.get_value(), Ok(Some("valor")));
     }
 
     #[test]
     fn test16_get_value_for_set_without_value_returns_empty() {
         let args = vec!["program".into(), "set".into(), "clave".into()];
         let cmd = Command::new(&args).expect("Debería crear comando");
-        assert_eq!(cmd.get_value(), Ok(String::new()));
+        assert_eq!(cmd.get_value(), Ok(None));
     }
 
     #[test]
@@ -363,21 +462,33 @@ mod tests {
     fn test19_parse_from_string_valid() {
         let cmd = Command::parse_from_string("set clave valor").unwrap();
         assert_eq!(cmd.get_type(), CommandType::Set);
-        assert_eq!(cmd.get_key(), Ok("clave".to_string()));
-        assert_eq!(cmd.get_value(), Ok("valor".to_string()));
+        assert_eq!(cmd.get_key(), Ok("clave"));
+        assert_eq!(cmd.get_value(), Ok(Some("valor")));
     }
 
     #[test]
     fn test20_parse_from_string_invalid() {
         let result = Command::parse_from_string("unknown cmd");
-        assert!(result.is_err());
+        assert!(matches!(result, Err(Error::UnknownCommand)));
     }
 
     #[test]
-    fn test21_parse_mayus_minus() {
+    fn test21_parse_missing_argument() {
+        let result = Command::parse_from_string("get");
+        assert!(matches!(result, Err(Error::MissingArgument)));
+    }
+
+    #[test]
+    fn test22_parse_extra_argument() {
+        let result = Command::parse_from_string("get clave extra");
+        assert!(matches!(result, Err(Error::ExtraArgument)));
+    }
+
+    #[test]
+    fn test23_parse_mayus_minus() {
         let cmd = Command::parse_from_string("SeT clave valor").unwrap();
         assert_eq!(cmd.get_type(), CommandType::Set);
-        assert_eq!(cmd.get_key(), Ok("clave".to_string()));
-        assert_eq!(cmd.get_value(), Ok("valor".to_string()));
+        assert_eq!(cmd.get_key(), Ok("clave"));
+        assert_eq!(cmd.get_value(), Ok(Some("valor")));
     }
 }

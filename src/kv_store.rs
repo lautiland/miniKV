@@ -20,7 +20,7 @@ use std::io::Result;
 /// let mut store = KvStore::new();
 /// store.set("name", "Alice").expect("Failed to set");
 /// let loaded = KvStore::load().expect("Failed to load");
-/// assert_eq!(loaded.get("name"), Some("Alice".to_string()));
+/// assert_eq!(loaded.get("name"), Some("Alice"));
 /// # let _ = std::fs::remove_file(".minikv.log");
 /// # let _ = std::fs::remove_file(".minikv.data");
 /// ```
@@ -121,7 +121,7 @@ impl KvStore {
         Ok(())
     }
 
-    /// Obtiene el valor asociado a una clave, None si no existe.
+    /// Obtiene el valor asociado a una clave, `None` si no existe.
     ///
     /// # Ejemplo
     /// ```
@@ -130,8 +130,8 @@ impl KvStore {
     /// assert_eq!(store.get("missing"), None);
     /// ```
     #[must_use]
-    pub fn get(&self, key: &str) -> Option<String> {
-        self.data.get(key).cloned()
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.data.get(key).map(String::as_str)
     }
 
     /// Retorna la cantidad de claves activas (con valor) en el almacenamiento.
@@ -309,7 +309,7 @@ mod tests {
 
         match KvStore::load() {
             Ok(loaded) => {
-                assert_eq!(loaded.get("nombre"), Some("jose".to_string()));
+                assert_eq!(loaded.get("nombre"), Some("jose"));
                 assert_eq!(loaded.len(), 1);
             }
             Err(e) => panic!("Error al cargar: {e}"),
@@ -336,7 +336,7 @@ mod tests {
 
         match KvStore::load() {
             Ok(loaded) => {
-                assert_eq!(loaded.get("nombre"), Some("juana".to_string()));
+                assert_eq!(loaded.get("nombre"), Some("juana"));
                 assert_eq!(loaded.len(), 1);
             }
             Err(e) => panic!("Error al cargar: {e}"),
@@ -396,7 +396,7 @@ mod tests {
         match KvStore::load() {
             Ok(loaded) => {
                 assert_eq!(loaded.get("a"), None);
-                assert_eq!(loaded.get("b"), Some("2".to_string()));
+                assert_eq!(loaded.get("b"), Some("2"));
                 assert_eq!(loaded.len(), 1);
             }
             Err(e) => panic!("Error al cargar: {e}"),
@@ -428,7 +428,7 @@ mod tests {
 
         match KvStore::load() {
             Ok(loaded) => {
-                assert_eq!(loaded.get("frase"), Some("hola mundo".to_string()));
+                assert_eq!(loaded.get("frase"), Some("hola mundo"));
                 assert_eq!(loaded.get("tmp"), None);
                 assert_eq!(loaded.len(), 1);
             }
@@ -454,8 +454,8 @@ mod tests {
         assert_eq!(metadata.len(), 0);
 
         let loaded = KvStore::load().unwrap();
-        assert_eq!(loaded.get("a"), Some("uno".to_string()));
-        assert_eq!(loaded.get("b"), Some("dos palabras".to_string()));
+        assert_eq!(loaded.get("a"), Some("uno"));
+        assert_eq!(loaded.get("b"), Some("dos palabras"));
         assert_eq!(loaded.len(), 2);
 
         cleanup();
@@ -516,7 +516,7 @@ mod tests {
 
         match KvStore::load() {
             Ok(loaded) => {
-                assert_eq!(loaded.get("frase"), Some(value_with_quotes.to_string()));
+                assert_eq!(loaded.get("frase"), Some(value_with_quotes));
             }
             Err(e) => panic!("Error al cargar: {e}"),
         }
@@ -537,7 +537,7 @@ mod tests {
 
         match KvStore::load() {
             Ok(loaded) => {
-                assert_eq!(loaded.get("mi clave"), Some("mi valor".to_string()));
+                assert_eq!(loaded.get("mi clave"), Some("mi valor"));
             }
             Err(e) => panic!("Error al cargar: {e}"),
         }

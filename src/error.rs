@@ -1,45 +1,69 @@
-//! Tipos de error para el almacén clave-valor `MiniKV`.
+//! Tipos de error para el servidor y cliente de `MiniKV`.
 //!
-//! Este módulo define todos los errores posibles que pueden ocurrir durante
-//! el parseo de comandos, validación de datos y operaciones de archivos.
+//! Este módulo centraliza los códigos de error definidos en la consigna
+//! y su clasificación por categoría.
+
+/// Categorías de error según la consigna.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ErrorCategory {
+    Client,
+    Communication,
+    Server,
+}
 
 /// Errores que pueden ocurrir en el sistema.
-///
-/// # Ejemplo
-/// ```
-/// use minikv::Error;
-/// let error = Error::NotFound;
-/// assert_eq!(error.msg(), "ERROR: NOT FOUND");
-/// ```
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Error {
+    // Errores de cliente
     NotFound,
     ExtraArgument,
-    InvalidDataFile,
-    InvalidLogFile,
     MissingArgument,
     UnknownCommand,
+    // Errores de comunicación
+    Timeout,
+    ConnectionClosed,
+    ClientSocketBinding,
+    // Errores del servidor
+    InvalidArgs,
+    ServerSocketBinding,
+    InvalidDataFile,
+    InvalidLogFile,
 }
 
 impl Error {
-    /// Retorna el mensaje de error formateado.
-    /// Todos los mensajes de error siguen el formato `"ERROR: <DESCRIPCIÓN>"`.
-    ///
-    /// # Ejemplo
-    /// ```
-    /// use minikv::Error;
-    /// assert_eq!(Error::NotFound.msg(), "ERROR: NOT FOUND");
-    /// assert_eq!(Error::MissingArgument.msg(), "ERROR: MISSING ARGUMENT");
-    /// ```
+    /// Retorna el código de error exacto según la consigna.
     #[must_use]
-    pub fn msg(&self) -> String {
+    pub fn code(self) -> &'static str {
         match self {
-            Error::NotFound => "ERROR: NOT FOUND".to_string(),
-            Error::ExtraArgument => "ERROR: EXTRA ARGUMENT".to_string(),
-            Error::InvalidDataFile => "ERROR: INVALID DATA FILE".to_string(),
-            Error::InvalidLogFile => "ERROR: INVALID LOG FILE".to_string(),
-            Error::MissingArgument => "ERROR: MISSING ARGUMENT".to_string(),
-            Error::UnknownCommand => "ERROR: UNKNOWN COMMAND".to_string(),
+            Error::NotFound => "NOT FOUND",
+            Error::ExtraArgument => "EXTRA ARGUMENT",
+            Error::MissingArgument => "MISSING ARGUMENT",
+            Error::UnknownCommand => "UNKNOWN COMMAND",
+            Error::Timeout => "TIMEOUT",
+            Error::ConnectionClosed => "CONNECTION CLOSED",
+            Error::ClientSocketBinding => "CLIENT SOCKET BINDING",
+            Error::InvalidArgs => "INVALID ARGS",
+            Error::ServerSocketBinding => "SERVER SOCKET BINDING",
+            Error::InvalidDataFile => "INVALID DATA FILE",
+            Error::InvalidLogFile => "INVALID LOG FILE",
+        }
+    }
+
+    /// Retorna la categoría del error.
+    #[must_use]
+    pub fn category(self) -> ErrorCategory {
+        match self {
+            Error::NotFound
+            | Error::ExtraArgument
+            | Error::MissingArgument
+            | Error::UnknownCommand => ErrorCategory::Client,
+            Error::Timeout | Error::ConnectionClosed | Error::ClientSocketBinding => {
+                ErrorCategory::Communication
+            }
+            Error::InvalidArgs
+            | Error::ServerSocketBinding
+            | Error::InvalidDataFile
+            | Error::InvalidLogFile => ErrorCategory::Server,
         }
     }
 }
@@ -49,32 +73,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_error_not_found_msg() {
-        assert_eq!(Error::NotFound.msg(), "ERROR: NOT FOUND");
-    }
-
-    #[test]
-    fn test_error_extra_argument_msg() {
-        assert_eq!(Error::ExtraArgument.msg(), "ERROR: EXTRA ARGUMENT");
-    }
-
-    #[test]
-    fn test_error_missing_argument_msg() {
-        assert_eq!(Error::MissingArgument.msg(), "ERROR: MISSING ARGUMENT");
-    }
-
-    #[test]
-    fn test_error_unknown_command_msg() {
-        assert_eq!(Error::UnknownCommand.msg(), "ERROR: UNKNOWN COMMAND");
-    }
-
-    #[test]
-    fn test_error_invalid_data_file_msg() {
-        assert_eq!(Error::InvalidDataFile.msg(), "ERROR: INVALID DATA FILE");
-    }
-
-    #[test]
-    fn test_error_invalid_log_file_msg() {
-        assert_eq!(Error::InvalidLogFile.msg(), "ERROR: INVALID LOG FILE");
+    fn test_error_codes() {
+        assert_eq!(Error::NotFound.code(), "NOT FOUND");
+        assert_eq!(Error::ExtraArgument.code(), "EXTRA ARGUMENT");
+        assert_eq!(Error::MissingArgument.code(), "MISSING ARGUMENT");
+        assert_eq!(Error::UnknownCommand.code(), "UNKNOWN COMMAND");
+        assert_eq!(Error::Timeout.code(), "TIMEOUT");
+        assert_eq!(Error::ConnectionClosed.code(), "CONNECTION CLOSED");
+        assert_eq!(Error::ClientSocketBinding.code(), "CLIENT SOCKET BINDING");
+        assert_eq!(Error::InvalidArgs.code(), "INVALID ARGS");
+        assert_eq!(Error::ServerSocketBinding.code(), "SERVER SOCKET BINDING");
+        assert_eq!(Error::InvalidDataFile.code(), "INVALID DATA FILE");
+        assert_eq!(Error::InvalidLogFile.code(), "INVALID LOG FILE");
     }
 }

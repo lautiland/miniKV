@@ -2,7 +2,7 @@
 //! es el único que escribe al kvstore
 //! maneja persistencia (oplog, snapshot)
 
-use crate::KvStore;
+use crate::{Error, KvStore};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, RwLock};
 
@@ -19,7 +19,7 @@ pub enum WriteOperation {
 }
 
 /// Resultado de una operación de escritura, que el writer envía de vuelta al handler
-pub type WriteResult = Result<String, String>;
+pub type WriteResult = Result<(), Error>;
 
 /// Inicia el writer, que procesa operaciones de escritura recibidas por el canal
 /// El writer es el único que modifica el store, asegurando consistencia y manejo de persistencia
@@ -44,17 +44,15 @@ pub fn start(store: &Arc<RwLock<KvStore>>, rx: &Receiver<WriteOperation>) {
 }
 
 fn execute_set(key: &str, value: &str, store: &Arc<RwLock<KvStore>>) -> WriteResult {
-    let mut store = store.write().unwrap();
-    match store.set(key, value) {
-        Ok(()) => Ok("OK".to_string()),
-        Err(e) => Err(e.to_string()),
-    }
+    let Ok(mut store) = store.write() else {
+        return Err(Error::ConnectionClosed);
+    };
+    store.set(key, value).map_err(|_| Error::InvalidLogFile)
 }
 
 fn execute_snapshot(store: &Arc<RwLock<KvStore>>) -> WriteResult {
-    let store = store.read().unwrap();
-    match store.snapshot() {
-        Ok(()) => Ok("SNAPSHOT OK".to_string()),
-        Err(e) => Err(format!("SNAPSHOT ERROR: {e}")),
-    }
+    let Ok(store) = store.read() else {
+        return Err(Error::ConnectionClosed);
+    };
+    store.snapshot().map_err(|_| Error::InvalidDataFile)
 }
